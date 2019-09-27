@@ -1,0 +1,26 @@
+exp_name: nonlinear_resnet101
+dataset: awa2
+concepts: attr
+load_model: False
+
+model: resnet101
+pretrained: True
+freeze: True
+
+end_epoch: 25
+
+l_rate: 5e-5
+optim: Adam
+momentum: 0.9
+
+calibration_gamma: 0
+
+k: 30
+d:
+  apy: 64
+  awa2: 85
+  sun: 102
+  cub: 312
+
+train_batch_size: 512
+val_batch_size: 640
