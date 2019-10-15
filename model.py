@@ -120,7 +120,7 @@ class transformer(nn.Module):
 
         semantics = semantics.t()
         semantics = semantics.expand(visual.shape[0], self.d, -1)
-        
+
         visual_feature = self.features(visual)
         self.visual_feature = visual_feature.view(visual_feature.size(0), -1)
         self.visual_matrix = self.transform(self.visual_feature)
@@ -243,7 +243,7 @@ def model_epoch(epoch, loss_name, model, type, data_loader, concepts, optimizer,
         metrics['total_g'].extend(np.array(gts_g.tolist()))
         metrics['correct_g'].extend(np.array(maxs_g_onehot.tolist()))
 
-        if 'debug' in kwargs.keys():
+        if 'debug' in kwargs.keys() and kwargs['debug']:
             break
 
     return metrics
