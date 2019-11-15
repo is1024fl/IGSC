@@ -1,11 +1,11 @@
-exp_name: linear_resnet101
-dataset: apy
+exp_name: devise_resnet101
+dataset: cub
 concepts: attr
 load_model: False
 debug: False
 skewness: True
 
-type: classifier
+type: transformer
 linear: False
 neg_sample: 0
 model: resnet101
@@ -22,7 +22,7 @@ momentum: 0.9
 
 calibration_gamma: 0
 
-k: 1
+k: 30
 d:
   bert:
     apy: 768

@@ -3,7 +3,7 @@ import torch
 from data_loader import ClassDatasets, ConceptSets
 from torch.utils.data import DataLoader
 import torch.optim as optim
-from model import classifier, transformer, model_epoch
+from model import DeVise, model_epoch
 import utils
 
 from os.path import join as PJ
@@ -18,7 +18,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if __name__ == '__main__':
 
     # load config
-    CONFIG = yaml.load(open("train_test_config.yaml"))
+    CONFIG = yaml.load(open("devise.yaml"))
 
     EXP_NAME = CONFIG['exp_name'] + '_' + CONFIG['type']
     DATASET = CONFIG['dataset']
@@ -59,17 +59,8 @@ if __name__ == '__main__':
         writer = SummaryWriter(PJ(SAVE_PATH))
 
         # set experiment type: classifier / transformer
-        if CONFIG['type'] == "classifier":
-            model = classifier(backbone=CONFIG['model'],
-                               k=CONFIG['k'], d=CONFIG['d'][CONFIG['concepts']][DATASET],
-                               pretrained=CONFIG['pretrained'], freeze=CONFIG['freeze'])
-
-        elif CONFIG['type'] == "transformer":
-            model = transformer(backbone=CONFIG['model'], linear=CONFIG['linear'],
-                                k=CONFIG['k'], d=CONFIG['d'][CONFIG['concepts']][DATASET],
-                                pretrained=CONFIG['pretrained'], freeze=CONFIG['freeze'])
-        else:
-            assert False, "Must Assign the model type: classifier or transformer"
+        model = DeVise(backbone=CONFIG['model'], d=CONFIG['d'][CONFIG['concepts']][DATASET],
+                       pretrained=CONFIG['pretrained'], freeze=CONFIG['freeze'])
 
         # load model weight
         if CONFIG['load_model']:
@@ -117,8 +108,9 @@ if __name__ == '__main__':
         for epoch in range(CONFIG['start_epoch'], CONFIG['end_epoch']):
 
             # train
-            train_metrics = model_epoch(loss_name="trainval", epoch=epoch, model=model, neg_sample=CONFIG['neg_sample'],
-                                        data_loader=train_loader, concepts=concepts,
+            train_metrics = model_epoch(loss_name="trainval", epoch=epoch,
+                                        model=model, type=CONFIG['type'], neg_sample=CONFIG['neg_sample'],
+                                        data_loader=train_loader, concepts=concepts, use_smooth=False, margin=0.1,
                                         optimizer=optimizer, writer=writer, debug=CONFIG['debug'])
 
             for g in [False, True]:
@@ -137,9 +129,10 @@ if __name__ == '__main__':
 
             for tn in STATE['split_list'][1:]:
 
-                test_metric = model_epoch(loss_name=tn, epoch=epoch, model=model,
+                test_metric = model_epoch(loss_name=tn, epoch=epoch,
+                                          model=model, type=CONFIG['type'],
                                           data_loader=test_loaders[tn], concepts=concepts,
-                                          optimizer=None, writer=None, debug=CONFIG['debug'])
+                                          optimizer=optimizer, writer=writer, debug=CONFIG['debug'])
 
                 for g in [False, True]:
                     test_class, test_acc = utils.cal_acc(test_metric, g)

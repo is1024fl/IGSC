@@ -1,4 +1,6 @@
 import numpy as np
+import pandas as pd
+from scipy.stats import skew
 
 
 def cal_h_acc(record, general=False):
@@ -23,3 +25,17 @@ def cal_acc(metric, general=False):
     acc = sum(classes) / len(np.asarray(metric['total']).sum(axis=0).reshape(-1))
 
     return classes, acc
+
+
+def skewness(metric, general=False):
+
+    labels = metric['correct_g'] if general else metric['correct']
+    totals = metric['total_g'] if general else metric['total']
+
+    # idx, count = np.unique(np.asarray(labels), return_counts=True)
+    # labels = dict(zip(idx, count))
+    # labels = pd.DataFrame.from_dict(labels, orient='index')
+
+    labels = pd.DataFrame(np.asarray(labels))
+
+    return labels.skew().values[0]

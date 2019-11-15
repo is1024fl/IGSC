@@ -16,6 +16,7 @@ class classifier(nn.Module):
 
     def __init__(self, backbone=None, pretrained=True, freeze=True, k=20, d=300):
         super(classifier, self).__init__()
+        self.type = 'classifier'
         self.k = k
         self.d = d
         self.non_linear_param = 0 if self.k == 1 else self.k + 1
@@ -41,7 +42,7 @@ class classifier(nn.Module):
             nn.Dropout(),
             nn.Linear(1024, self.output_num))
 
-    def forward(self, visual, semantics):
+    def forward(self, visual, semantics, **kwargs):
         visual_feature = self.features(visual)
 
         self.visual_feature = visual_feature.view(visual_feature.size(0), -1)
@@ -79,7 +80,7 @@ class transformer(nn.Module):
 
     def __init__(self, backbone=None, linear=None, pretrained=True, freeze=True, k=20, d=300):
         super(transformer, self).__init__()
-
+        self.type = 'transformer'
         self.d = d
         self.backbone = None
 
@@ -93,6 +94,7 @@ class transformer(nn.Module):
             assert False, "backbone error"
 
         self.output_num = 0
+
         if linear:
             self.linear = True
             self.k = k
@@ -156,7 +158,59 @@ class transformer(nn.Module):
         return output
 
 
-def model_epoch(epoch, loss_name, model, type, data_loader, concepts, optimizer, writer, **kwargs):
+class DeVise(nn.Module):
+
+    def __init__(self, backbone=None, pretrained=True, freeze=True, d=300):
+        super(DeVise, self).__init__()
+        self.type = 'DeVise'
+        self.d = d
+
+        self.backbone = None
+        if backbone == "resnet101":
+            self.backbone = resnet101(pretrained=pretrained)
+
+        elif backbone == "resnet152":
+            self.backbone = resnet152(pretrained=pretrained)
+        else:
+            assert False, "backbone error"
+
+        self.features = nn.Sequential(*list(self.backbone.children())[:-1])
+        if freeze:
+            for param in self.features.parameters():
+                param.requires_grad = False
+
+        self.transform = nn.Sequential(
+            nn.Linear(2048, 1024),
+            nn.ReLU(),
+            nn.Dropout(),
+            nn.Linear(1024, self.d))
+
+    def forward(self, visual, semantics, state=None):
+        visual_feature = self.features(visual)
+
+        self.visual_feature = visual_feature.view(visual_feature.size(0), -1)
+        self.visual_feature = self.transform(self.visual_feature)
+
+        semantics = semantics.t()
+        self.semantic_transforms = torch.matmul(self.visual_feature, semantics)[..., None]
+
+        # cosine = nn.CosineSimilarity(dim=2, eps=1e-6)
+        # self.semantic_transforms = cosine(self.visual_feature, semantics)[..., None]
+
+        if state == "train":
+            output = self.semantic_transforms
+
+        elif state == "test":
+            # self.semantic_transforms = 1 / (self.semantic_transforms + 1e-9)
+            output = torch.softmax(self.semantic_transforms, dim=1)
+
+        else:
+            assert False, "train/ test state error"
+
+        return output
+
+
+def model_epoch(epoch, loss_name, model, data_loader, concepts, optimizer, writer, **kwargs):
 
     print(loss_name)
 
@@ -189,27 +243,59 @@ def model_epoch(epoch, loss_name, model, type, data_loader, concepts, optimizer,
 
         # conventional ZSL result
         gts = batch_label[:, concepts[loss_name]['label']][..., None]
+        outputs = model(Variable(batch_img), concepts[loss_name]['vector'], state=state)
 
         # cal loss
         if state == 'train':
 
-            outputs = model(Variable(batch_img), concepts[loss_name]['vector'], "train")
             optimizer.zero_grad()
 
-            if type == "classifier":
+            if model.type == "classifier":
                 loss = F.binary_cross_entropy(outputs, gts)
 
-            elif type == "transformer":
+            elif model.type == "DeVise":
+
                 pos_i = np.where((gts == 1).squeeze().data.cpu())
                 neg_i = np.where((gts == 0).squeeze().data.cpu())
 
-                pos_trans = outputs[pos_i].view(outputs.shape[0], -1)
-                neg_trans = outputs[neg_i].view(outputs.shape[0], -1)
+                pos_sims = outputs[pos_i].view(outputs.shape[0], -1)
+                neg_sims = outputs[neg_i].view(outputs.shape[0], -1)
 
-                loss = torch.sum(torch.stack(
-                    [torch.sum(torch.stack([torch.exp(p - n) for n in ns for p in ps]))
-                     for ps, ns in zip(pos_trans, neg_trans)]))
-                loss = torch.log(loss + torch.FloatTensor([1.0]).to(DEVICE))
+                if 'use_smooth' in kwargs.keys() and kwargs['use_smooth']:
+                    s_p = torch.sum(torch.exp(-pos_sims), dim=1)
+                    s_n = torch.sum(torch.exp(neg_sims), dim=1)
+                    loss = torch.log(1.0 + torch.sum(s_n * s_p))
+
+                else:
+                    margin = torch.FloatTensor([kwargs['margin']]).to(DEVICE)
+
+                    loss = torch.mean(torch.stack(
+                        [torch.sum(torch.stack([margin + (n - p) if margin + (n - p) > 0 else torch.FloatTensor([0]).to(DEVICE) for n in ns for p in ps]))
+                         for ps, ns in zip(pos_sims, neg_sims)]))
+
+                    loss = loss.mean()
+
+            elif model.type == "transformer":
+
+                pos_i = np.where((gts == 1).squeeze().data.cpu())
+                neg_i = np.where((gts == 0).squeeze().data.cpu())
+
+                pos_sims = outputs[pos_i].view(outputs.shape[0], -1)
+                neg_sims = outputs[neg_i].view(outputs.shape[0], -1)
+
+                if 'use_smooth' in kwargs.keys() and kwargs['use_smooth']:
+                    s_p = torch.sum(torch.exp(pos_sims), dim=1)
+                    s_n = torch.sum(torch.exp(-neg_sims), dim=1)
+                    loss = torch.log(1.0 + torch.sum(s_n * s_p))
+
+                else:
+                    margin = torch.FloatTensor([kwargs['margin']]).to(DEVICE)
+
+                    loss = torch.mean(torch.stack(
+                        [torch.sum(torch.stack([margin + (p - n) if margin + (p - n) > 0 else torch.FloatTensor([0]).to(DEVICE) for n in ns for p in ps]))
+                         for ps, ns in zip(pos_sims, neg_sims)]))
+
+                    loss = loss.mean()
 
             else:
                 assert False, "model type error"
@@ -222,7 +308,6 @@ def model_epoch(epoch, loss_name, model, type, data_loader, concepts, optimizer,
             print('[%d, %6d] loss: %.4f' % (epoch, batch_i * data_loader.batch_size, tmp_loss))
 
         # ZSL predict
-        outputs = model(Variable(batch_img), concepts[loss_name]['vector'], "test")
         maxs = torch.max(outputs, 1)[1][..., None]
         maxs_onehot = torch.zero_(outputs).scatter_(1, maxs, 1)
         metrics['total'].extend(np.array(gts.tolist()))
@@ -230,7 +315,7 @@ def model_epoch(epoch, loss_name, model, type, data_loader, concepts, optimizer,
 
         # GZSL result
         gts_g = batch_label[:, concepts['general']['label']][..., None]
-        outputs_g = model(Variable(batch_img), concepts['general']['vector'], "test")
+        outputs_g = model(Variable(batch_img), concepts['general']['vector'], state="test")
 
         # calibration
         if 'calibration_gamma' in kwargs.keys():
