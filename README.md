@@ -1,8 +1,3 @@
----
-title: 'Zero-Shot Recognition through Image-Guided Semantic Classification'
-disqus: hackmd
----
-
 Zero-Shot Recognition through Image-Guided Semantic Classification
 ===
 
